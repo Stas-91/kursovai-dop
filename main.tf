@@ -62,7 +62,8 @@ resource "yandex_compute_instance" "vm" {
 
   metadata = {
     user-data = templatefile("./meta/user-data.yaml.tmpl", {
-      user_vm = var.user_vm
+      user_vm = var.user_vm,
+      ssh_key = var.ssh_public_key
     })
   }
 
