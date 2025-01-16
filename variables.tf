@@ -4,11 +4,25 @@ variable "user_vm" {
   default     = "stas"
 }
 
-variable "elastic_passwd" {}
+variable "elastic_passwd" {
+  type        = string
+  description = "password for elastic"
+}
 
-variable "grafana_passwd" {}
+variable "grafana_passwd" {
+  type        = string
+  description = "password for Grafana"
+}
 
-variable "postgre_passwd" {}
+variable "postgre_passwd" {
+  type        = string
+  description = "password for PostgreSQL"
+}
+
+variable "ssh_public_key" {
+  type        = string
+  description = "SSH public key for VMs"
+}
 
 # Переменные для создания ВМ
 variable "cores" {
