@@ -6,7 +6,7 @@ users:
     shell: /bin/bash
     sudo: ['ALL=(ALL) NOPASSWD:ALL']
     ssh-authorized-keys:
-      - 
+      - ${ssh_key}
 
 write_files:
   - path: /var/www/html/index.html
