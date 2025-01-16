@@ -1,0 +1,20 @@
+[Unit]
+Description=PostgreSQL Prometheus Adapter
+After=network.target
+
+[Service]
+Environment="DATABASE_URL=user=pguser password={{ postgre_password }} host={{ postgre_host }} port=6432 sslmode=verify-full dbname=pgdatabase target_session_attrs=read-write"
+ExecStart=/opt/postgresql-prometheus-adapter-{{ adapter_version }}/postgresql-prometheus-adapter \
+  --web-listen-address=":9201" \
+  --pg-partition="hourly" \
+  --pg-commit-secs=15 \
+  --pg-commit-rows=20000 \
+  --pg-threads=2 \
+  --parser-threads=5
+WorkingDirectory=/opt/postgresql-prometheus-adapter-{{ adapter_version }}
+Restart=always
+User=stas
+Group=stas
+
+[Install]
+WantedBy=multi-user.target

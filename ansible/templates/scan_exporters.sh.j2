@@ -1,0 +1,53 @@
+#!/bin/bash
+
+# Оригинальные подсети (CIDR)
+SUBNETS_CIDR=({% for subnet in subnets.split(',') %}"{{ subnet }}"{% if not loop.last %}, {% endif %}{% endfor %})
+
+# Преобразование CIDR в базовые адреса
+SUBNETS=()
+for cidr in "${SUBNETS_CIDR[@]}"; do
+  # Извлечение первых трех октетов (базового адреса)
+  base=$(echo "$cidr" | cut -d'/' -f1 | awk -F'.' '{print $1"."$2"."$3}')
+  SUBNETS+=("$base")
+done
+
+# Порты для поиска
+PORTS=("9100" "4040")
+
+# Основной файл и временный файл
+OUTPUT_FILE="/home/{{ vm_user }}/targets.json"
+TEMP_FILE="/tmp/targets_temp.json"
+
+# Начало JSON-файла (создаём временный файл)
+echo "[" > $TEMP_FILE
+
+# Функция добавления целей в JSON
+add_target() {
+  local ip=$1
+  local port=$2
+  local job=$3
+  echo "{\"targets\": [\"$ip:$port\"], \"labels\": {\"job\": \"$job\"}}," >> $TEMP_FILE
+}
+
+# Сканирование подсетей и портов
+for subnet in "${SUBNETS[@]}"; do
+  for i in {3..15}; do
+    IP="$subnet.$i"
+    for port in "${PORTS[@]}"; do
+      if nc -z -w1 $IP $port; then
+        if [ "$port" == "9100" ]; then
+          add_target "$IP" "$port" "node_exporter"
+        elif [ "$port" == "4040" ]; then
+          add_target "$IP" "$port" "nginx_log_exporter"
+        fi
+      fi
+    done
+  done
+done
+
+# Удаляем последнюю запятую и закрываем JSON
+sed -i '$ s/,$//' $TEMP_FILE
+echo "]" >> $TEMP_FILE
+
+# Перемещаем временный файл на место основного
+mv $TEMP_FILE $OUTPUT_FILE

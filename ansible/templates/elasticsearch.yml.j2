@@ -1,0 +1,11 @@
+cluster.name: elasticsearch-cluster
+node.name: "elasticsearch-node"
+path.data: /var/lib/elasticsearch
+path.logs: /var/log/elasticsearch
+network.host: "{{ ansible_host }}"
+http.port: 9200
+discovery.type: single-node
+
+# Security settings
+xpack.security.enabled: true
+xpack.security.transport.ssl.enabled: false  # Отключаем SSL для транспортного уровня
