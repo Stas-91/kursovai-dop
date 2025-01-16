@@ -1,0 +1,87 @@
+---
+- name: Install and configure Kibana
+  hosts: ansible_hosts
+  become: true
+
+  vars:
+    elasticsearch_repo: "deb [trusted=yes] https://mirror.yandex.ru/mirrors/elastic/7/ stable main"
+    kibana_config_path: "/etc/kibana/kibana.yml"
+    kibana_service: "kibana"
+    kibana_export_file: "files/export.ndjson"
+
+  tasks:
+    - name: Add Elasticsearch repository
+      ansible.builtin.apt_repository:
+        repo: "{{ elasticsearch_repo }}"
+        state: present
+
+    - name: Update APT cache
+      ansible.builtin.apt:
+        update_cache: true
+      failed_when: false
+
+    - name: Install Kibana
+      ansible.builtin.apt:
+        name: kibana
+        state: present
+
+    - name: Configure Kibana
+      ansible.builtin.template:
+        src: templates/kibana.yml.j2
+        dest: "{{ kibana_config_path }}"
+        owner: kibana
+        group: kibana
+        mode: '0644'
+
+    - name: Ensure Kibana service is started and enabled
+      ansible.builtin.systemd:
+        name: "{{ kibana_service }}"
+        state: started
+        enabled: true
+
+    # Загрузка конфигурации через API Kibana
+    - name: Wait for Kibana to become available
+      ansible.builtin.uri:
+        url: http://{{ ansible_host }}:5601
+        status_code: 200
+        return_content: false
+      register: kibana_status
+      until: kibana_status.status == 200
+      retries: 10
+      delay: 20
+
+    - name: Copy Kibana export file to remote host
+      ansible.builtin.copy:
+        src: files/export.ndjson
+        dest: /tmp/export.ndjson
+        mode: '0644'
+
+    - name: Import Kibana dashboard and visualizations using curl with authentication
+      shell: |
+        curl -X POST "http://{{ ansible_host }}:5601/api/saved_objects/_import?overwrite=true" \
+          -H "kbn-xsrf: true" \
+          -u elastic:{{ elastic_password }} \
+          --form file=@/tmp/export.ndjson
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    # Установка и настройка Filebeat
+    - name: Install Filebeat
+      ansible.builtin.apt:
+        name: filebeat
+        state: present
+
+    - name: Configure Filebeat using template
+      ansible.builtin.template:
+        src: templates/filebeat.yml.j2
+        dest: /etc/filebeat/filebeat.yml
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Enable and start Filebeat service
+      ansible.builtin.systemd:
+        name: filebeat
+        state: started
+        enabled: true

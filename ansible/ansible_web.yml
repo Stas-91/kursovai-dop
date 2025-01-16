@@ -1,0 +1,160 @@
+---
+- name: Install and configure Nginx with exporters and Filebeat
+  hosts: ansible_hosts
+  become: true
+
+  vars:
+    node_exporter_version: "1.6.1"
+    nginx_log_exporter_version: "1.11.0"
+    elasticsearch_repo: "deb [trusted=yes] https://mirror.yandex.ru/mirrors/elastic/7/ stable main"
+
+  tasks:
+    # Install Nginx with Generate dynamic index.html
+    - name: Update package list
+      ansible.builtin.apt:
+        update_cache: true
+
+    - name: Install Nginx
+      ansible.builtin.apt:
+        name: nginx
+        state: present
+
+    - name: Ensure Nginx is running
+      ansible.builtin.service:
+        name: nginx
+        state: started
+        enabled: true
+
+    - name: Generate dynamic index.html
+      ansible.builtin.template:
+        src: templates/index.html.j2
+        dest: /var/www/html/index.html
+        mode: '0644'
+        owner: www-data
+        group: www-data
+
+    # Install Node Exporter
+    - name: Download Node Exporter
+      ansible.builtin.get_url:
+        url: "https://github.com/prometheus/node_exporter/releases/download/v{{ node_exporter_version }}/node_exporter-{{ node_exporter_version }}.linux-amd64.tar.gz"
+        dest: /tmp/node_exporter.tar.gz
+        mode: '0644'
+
+    - name: Extract Node Exporter to /tmp
+      ansible.builtin.unarchive:
+        src: /tmp/node_exporter.tar.gz
+        dest: /tmp/
+        remote_src: true
+
+    - name: Move Node Exporter binary to /usr/local/bin
+      ansible.builtin.command:
+        cmd: mv /tmp/node_exporter-{{ node_exporter_version }}.linux-amd64/node_exporter /usr/local/bin/node_exporter
+      args:
+        creates: /usr/local/bin/node_exporter
+
+    - name: Create Node Exporter systemd service
+      ansible.builtin.copy:
+        src: files/node_exporter.service
+        dest: /etc/systemd/system/node_exporter.service
+        mode: '0644'
+
+    - name: Start and enable Node Exporter
+      ansible.builtin.systemd:
+        name: node_exporter
+        state: started
+        enabled: true
+
+    # Install Nginx Log Exporter
+    - name: Download Nginx Log Exporter binary
+      ansible.builtin.get_url:
+        url: "https://github.com/martin-helmich/prometheus-nginxlog-exporter/releases/download/v{{ nginx_log_exporter_version }}/prometheus-nginxlog-exporter_{{ nginx_log_exporter_version }}_linux_amd64.tar.gz"
+        dest: /tmp/nginx_log_exporter.tar.gz
+        mode: '0644'
+
+    - name: Extract Nginx Log Exporter binary to /tmp
+      ansible.builtin.unarchive:
+        src: /tmp/nginx_log_exporter.tar.gz
+        dest: /tmp/
+        remote_src: true
+
+    - name: Move Nginx Log Exporter binary to /usr/sbin
+      ansible.builtin.command:
+        cmd: mv /tmp/prometheus-nginxlog-exporter /usr/sbin/prometheus-nginxlog-exporter
+      args:
+        creates: /usr/sbin/prometheus-nginxlog-exporter
+
+    - name: Ensure Nginx Log Exporter binary is executable
+      ansible.builtin.file:
+        path: /usr/sbin/prometheus-nginxlog-exporter
+        mode: '0755'
+
+    - name: Create Nginx Log Exporter systemd service file
+      ansible.builtin.copy:
+        src: files/prometheus-nginxlog-exporter.service
+        dest: /etc/systemd/system/prometheus-nginxlog-exporter.service
+        mode: '0644'
+
+    - name: Create Nginx Log Exporter configuration file
+      ansible.builtin.copy:
+        src: files/prometheus-nginxlog-exporter.hcl
+        dest: /etc/prometheus-nginxlog-exporter.hcl
+        mode: '0644'
+
+    - name: Add nobody user to adm group
+      ansible.builtin.user:
+        name: nobody
+        groups: adm
+        append: true
+
+    - name: Reload systemd to apply Nginx Log Exporter service
+      ansible.builtin.systemd:
+        daemon_reload: true
+
+    - name: Start and enable Nginx Log Exporter service
+      ansible.builtin.systemd:
+        name: prometheus-nginxlog-exporter
+        state: started
+        enabled: true
+
+    # Установка и настройка Filebeat
+    - name: Add Elasticsearch repository
+      ansible.builtin.apt_repository:
+        repo: "{{ elasticsearch_repo }}"
+        state: present
+
+    - name: Update APT cache
+      ansible.builtin.apt:
+        update_cache: true
+      failed_when: false
+
+    - name: Install Filebeat
+      ansible.builtin.apt:
+        name: filebeat
+        state: present
+
+    - name: Configure Filebeat using template
+      ansible.builtin.template:
+        src: templates/filebeat-web.yml.j2
+        dest: /etc/filebeat/filebeat.yml
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Copy Nginx module configuration
+      ansible.builtin.copy:
+        src: files/nginx.yml
+        dest: /etc/filebeat/modules.d/nginx.yml
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Enable Nginx module in Filebeat
+      ansible.builtin.command:
+        cmd: filebeat modules enable nginx
+      changed_when: false
+
+    - name: Enable and start Filebeat service
+      ansible.builtin.systemd:
+        name: filebeat
+        state: started
+        enabled: true

@@ -1,0 +1,93 @@
+---
+- name: Install Elasticsearch from Yandex repository
+  hosts: ansible_hosts
+  become: true
+
+  vars:
+    elasticsearch_repo: "deb [trusted=yes] https://mirror.yandex.ru/mirrors/elastic/7/ stable main"
+
+  tasks:
+    - name: Add Elasticsearch repository
+      ansible.builtin.apt_repository:
+        repo: "{{ elasticsearch_repo }}"
+        state: present
+
+    - name: Update APT cache
+      ansible.builtin.apt:
+        update_cache: true
+      failed_when: false
+
+    - name: Install Elasticsearch
+      ansible.builtin.apt:
+        name: elasticsearch
+        state: present
+
+    - name: Configure Elasticsearch using template
+      ansible.builtin.template:
+        src: templates/elasticsearch.yml.j2
+        dest: /etc/elasticsearch/elasticsearch.yml
+        owner: elasticsearch
+        group: elasticsearch
+        mode: '0644'
+
+    - name: Enable and start Elasticsearch
+      ansible.builtin.systemd:
+        name: elasticsearch
+        state: started
+        enabled: true
+
+    - name: Wait for Elasticsearch to become available
+      ansible.builtin.uri:
+        url: http://{{ ansible_host }}:9200
+        status_code: [200, 401]
+        return_content: false
+      retries: 20
+      delay: 10
+
+    - name: Setup password for elastic user
+      ansible.builtin.command:
+        cmd: /usr/share/elasticsearch/bin/elasticsearch-setup-passwords auto --batch
+      register: setup_passwords_output
+      changed_when: false
+
+    - name: Extract temporary password for elastic user
+      ansible.builtin.shell: |
+        set -o pipefail
+        echo "{{ setup_passwords_output.stdout }}" | grep 'PASSWORD elastic =' | awk '{print $4}'
+      args:
+        executable: /bin/bash  # Используем Bash для поддержки pipefail
+      register: reset_password_output
+      changed_when: false
+
+    - name: Change elastic user password
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:9200/_security/user/elastic/_password"
+        method: POST
+        user: elastic
+        password: "{{ reset_password_output.stdout }}"
+        headers:
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          password: "{{ elastic_password }}"
+        status_code: 200
+
+    # Установка и настройка Filebeat
+    - name: Install Filebeat
+      ansible.builtin.apt:
+        name: filebeat
+        state: present
+
+    - name: Configure Filebeat using template
+      ansible.builtin.template:
+        src: templates/filebeat.yml.j2
+        dest: /etc/filebeat/filebeat.yml
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Enable and start Filebeat service
+      ansible.builtin.systemd:
+        name: filebeat
+        state: started
+        enabled: true

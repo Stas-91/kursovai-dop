@@ -1,0 +1,238 @@
+---
+- name: Install and configure Prometheus with exporters
+  hosts: ansible_hosts
+  become: true
+
+  vars:
+    elasticsearch_repo: "deb [trusted=yes] https://mirror.yandex.ru/mirrors/elastic/7/ stable main"
+    go_version: "1.21.1"
+    adapter_version: "v1.1"
+
+  tasks:
+    # Установка и настройка Prometheus--------------------------------------------------------
+    - name: Ensure required directories exist for Prometheus binaries
+      ansible.builtin.file:
+        path: /opt/prometheus
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Download Prometheus tarball
+      ansible.builtin.get_url:
+        url: https://github.com/prometheus/prometheus/releases/download/v2.46.0/prometheus-2.46.0.linux-amd64.tar.gz
+        dest: /tmp/prometheus.tar.gz
+        mode: '0644'
+
+    - name: Extract Prometheus tarball
+      ansible.builtin.unarchive:
+        src: /tmp/prometheus.tar.gz
+        dest: /opt/prometheus
+        remote_src: true
+
+    - name: Link Prometheus binary to system path
+      ansible.builtin.file:
+        src: /opt/prometheus/prometheus-2.46.0.linux-amd64/prometheus
+        dest: /usr/local/bin/prometheus
+        state: link
+
+    - name: Create Prometheus configuration directory
+      ansible.builtin.file:
+        path: /etc/prometheus
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Upload Prometheus targets file
+      ansible.builtin.copy:
+        src: files/targets.json
+        dest: /home/{{ vm_user }}/targets.json
+        owner: "{{ vm_user }}"
+        group: "{{ vm_user }}"
+        mode: '0644'
+
+    - name: Upload scan exporters script
+      ansible.builtin.template:
+        src: templates/scan_exporters.sh.j2
+        dest: /home/{{ vm_user }}/scan_exporters.sh
+        owner: "{{ vm_user }}"
+        group: "{{ vm_user }}"
+        mode: '0755'
+
+    - name: Add cron job for scan_exporters.sh
+      ansible.builtin.cron:
+        name: "Run scan_exporters.sh every 10 minutes"
+        user: "{{ vm_user }}"
+        job: "/home/{{ vm_user }}/scan_exporters.sh"
+        minute: "*/5"
+
+    - name: Deploy Prometheus configuration file
+      ansible.builtin.template:
+        src: templates/prometheus.yml.j2
+        dest: /etc/prometheus/prometheus.yml
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Deploy Prometheus systemd service file
+      ansible.builtin.copy:
+        src: files/prometheus.service
+        dest: /etc/systemd/system/prometheus.service
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Reload systemd to apply Prometheus service
+      ansible.builtin.systemd:
+        daemon_reload: true
+
+    - name: Start and enable Prometheus service
+      ansible.builtin.systemd:
+        name: prometheus
+        state: started
+        enabled: true
+
+    # Установка и настройка Filebeat--------------------------------------------------------
+    - name: Add Elasticsearch repository
+      ansible.builtin.apt_repository:
+        repo: "{{ elasticsearch_repo }}"
+        state: present
+
+    - name: Update APT cache
+      ansible.builtin.apt:
+        update_cache: true
+      failed_when: false
+
+    - name: Install Filebeat
+      ansible.builtin.apt:
+        name: filebeat
+        state: present
+
+    - name: Configure Filebeat using template
+      ansible.builtin.template:
+        src: templates/filebeat.yml.j2
+        dest: /etc/filebeat/filebeat.yml
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Enable and start Filebeat service
+      ansible.builtin.systemd:
+        name: filebeat
+        state: started
+        enabled: true
+
+    # Установка и настройка postgresql-prometheus-adapter--------------------------------------
+    - name: Ensure PostgreSQL certificate directory exists
+      ansible.builtin.file:
+        path: "/home/{{ vm_user }}/.postgresql"
+        state: directory
+        owner: "{{ vm_user }}"
+        mode: '0700'
+
+    - name: Download PostgreSQL root certificate
+      ansible.builtin.get_url:
+        url: "https://storage.yandexcloud.net/cloud-certs/CA.pem"
+        dest: "/home/{{ vm_user }}/.postgresql/root.crt"
+        mode: '0600'
+        owner: "{{ vm_user }}"
+
+    - name: Install required packages
+      ansible.builtin.apt:
+        name:
+          - make
+        state: present
+        update_cache: true
+
+    - name: Download Go
+      ansible.builtin.get_url:
+        url: "https://go.dev/dl/go{{ go_version }}.linux-amd64.tar.gz"
+        dest: "/tmp/go{{ go_version }}.linux-amd64.tar.gz"
+        force: true
+        mode: "0644"
+
+    - name: Install Go
+      ansible.builtin.unarchive:
+        src: "/tmp/go{{ go_version }}.linux-amd64.tar.gz"
+        dest: "/usr/local"
+        remote_src: true
+        extra_opts: ["--strip-components=1"]
+        creates: "/usr/local/go/bin/go"
+
+    - name: Ensure Go is in PATH
+      ansible.builtin.lineinfile:
+        path: /etc/profile
+        line: 'export PATH=$PATH:/usr/local/go/bin'
+        state: present
+
+    - name: Reload shell environment for PATH
+      ansible.builtin.shell: |
+        . /etc/profile
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: Verify Go installation
+      ansible.builtin.command:
+        cmd: "/usr/local/bin/go version"
+      register: go_version_output
+      changed_when: false
+
+    - name: Print Go version
+      ansible.builtin.debug:
+        var: go_version_output.stdout
+
+    - name: Download postgresql-prometheus-adapter
+      ansible.builtin.uri:
+        url: "https://github.com/CrunchyData/postgresql-prometheus-adapter/archive/refs/tags/{{ adapter_version }}.tar.gz"
+        dest: "/tmp/postgresql-prometheus-adapter-{{ adapter_version }}.tar.gz"
+        force: true
+        method: GET
+
+    - name: Create target directory for postgresql-prometheus-adapter
+      ansible.builtin.file:
+        path: "/opt/postgresql-prometheus-adapter-{{ adapter_version }}"
+        state: directory
+        mode: "0755"
+
+    - name: Extract postgresql-prometheus-adapter
+      ansible.builtin.unarchive:
+        src: "/tmp/postgresql-prometheus-adapter-{{ adapter_version }}.tar.gz"
+        dest: "/opt/postgresql-prometheus-adapter-{{ adapter_version }}"
+        remote_src: true
+        extra_opts: ["--strip-components=1"]
+
+    - name: Install Go dependencies for postgresql-prometheus-adapter
+      ansible.builtin.shell: |
+        /usr/local/bin/go mod download github.com/go-kit/kit &&
+        /usr/local/bin/go get github.com/go-kit/kit/log@v0.12.0 &&
+        /usr/local/bin/go get github.com/go-kit/kit/log/level@v0.12.0 &&
+        /usr/local/bin/go get github.com/crunchydata/postgresql-prometheus-adapter/pkg/postgresql &&
+        /usr/local/bin/go get github.com/crunchydata/postgresql-prometheus-adapter
+      args:
+        chdir: "/opt/postgresql-prometheus-adapter-{{ adapter_version }}"
+      changed_when: false
+
+    - name: Build postgresql-prometheus-adapter
+      ansible.builtin.command:
+        cmd: "make"
+      args:
+        chdir: "/opt/postgresql-prometheus-adapter-{{ adapter_version }}"
+      changed_when: false
+
+    - name: Create systemd service for postgresql-prometheus-adapter
+      ansible.builtin.template:
+        src: postgresql-prometheus-adapter.service.j2
+        dest: /etc/systemd/system/postgresql-prometheus-adapter.service
+        mode: "0644"
+
+    - name: Reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: true
+
+    - name: Enable and start postgresql-prometheus-adapter
+      ansible.builtin.service:
+        name: postgresql-prometheus-adapter
+        state: started
+        enabled: true

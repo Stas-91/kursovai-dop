@@ -1,0 +1,93 @@
+---
+- name: Install and configure Grafana with dashboards
+  hosts: ansible_hosts
+  become: true
+
+  vars:
+    grafana_version: "10.1.2"
+    elasticsearch_repo: "deb [trusted=yes] https://mirror.yandex.ru/mirrors/elastic/7/ stable main"
+
+  tasks:
+    - name: Download Grafana .deb package
+      ansible.builtin.get_url:
+        url: "https://dl.grafana.com/oss/release/grafana_{{ grafana_version }}_amd64.deb"
+        dest: /tmp/grafana_{{ grafana_version }}_amd64.deb
+        mode: '0644'
+
+    - name: Install Grafana from .deb package
+      ansible.builtin.apt:
+        deb: /tmp/grafana_{{ grafana_version }}_amd64.deb
+
+    - name: Create Grafana data source provisioning configuration
+      ansible.builtin.template:
+        src: templates/datasources.yml.j2
+        dest: /etc/grafana/provisioning/datasources/datasources.yml
+        mode: '0644'
+
+    - name: Create Grafana dashboard provisioning configuration
+      ansible.builtin.copy:
+        src: files/dashboards.yml
+        dest: /etc/grafana/provisioning/dashboards/dashboards.yml
+        mode: '0644'
+
+    - name: Copy Grafana dashboard JSON
+      ansible.builtin.copy:
+        src: files/node_nginx_dashboard.json
+        dest: /etc/grafana/provisioning/dashboards/node_nginx_dashboard.json
+        mode: '0644'
+
+    - name: Copy Grafana alert yaml
+      ansible.builtin.copy:
+        src: files/nginx-alert.yml
+        dest: /etc/grafana/provisioning/alerting/nginx-alert.yml
+        mode: '0644'
+
+    - name: Configure Grafana admin username
+      ansible.builtin.lineinfile:
+        path: /etc/grafana/grafana.ini
+        regexp: '^;?admin_user ='
+        line: "admin_user = admin"
+        state: present
+
+    - name: Configure Grafana admin password
+      ansible.builtin.lineinfile:
+        path: /etc/grafana/grafana.ini
+        regexp: '^;?admin_password ='
+        line: "admin_password = {{ grafana_password }}"
+        state: present
+
+    - name: Restart Grafana service to apply dashboards provisioning
+      ansible.builtin.systemd:
+        name: grafana-server
+        state: restarted
+        enabled: true
+
+    # Установка и настройка Filebeat
+    - name: Add Elasticsearch repository
+      ansible.builtin.apt_repository:
+        repo: "{{ elasticsearch_repo }}"
+        state: present
+
+    - name: Update APT cache
+      ansible.builtin.apt:
+        update_cache: true
+      failed_when: false
+
+    - name: Install Filebeat
+      ansible.builtin.apt:
+        name: filebeat
+        state: present
+
+    - name: Configure Filebeat using template
+      ansible.builtin.template:
+        src: templates/filebeat.yml.j2
+        dest: /etc/filebeat/filebeat.yml
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Enable and start Filebeat service
+      ansible.builtin.systemd:
+        name: filebeat
+        state: started
+        enabled: true
