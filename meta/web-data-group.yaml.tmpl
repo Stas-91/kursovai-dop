@@ -1,0 +1,33 @@
+#cloud-config
+
+users:
+  - name: ${user_vm}
+    groups: sudo
+    shell: /bin/bash
+    sudo: ['ALL=(ALL) NOPASSWD:ALL']
+    ssh-authorized-keys:
+      - 
+
+write_files:
+  - path: /var/www/html/index.html
+    content: |
+      <!DOCTYPE html>
+      <html lang="en">
+      <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Welcome to Nginx</title>
+      </head>
+      <body>
+        <h1>Welcome to Nginx on HOSTNAME_PLACEHOLDER</h1>
+        <p>This VM's internal IP address is: INTERNAL_IP_PLACEHOLDER</p>
+      </body>
+      </html>
+    permissions: '0644'
+
+runcmd:
+  - |
+    internal_ip=$(hostname -I | awk '{print $1}')
+    hostname_vm=$(hostname)
+    sed -i "s/INTERNAL_IP_PLACEHOLDER/$internal_ip/" /var/www/html/index.html
+    sed -i "s/HOSTNAME_PLACEHOLDER/$hostname_vm/" /var/www/html/index.html
