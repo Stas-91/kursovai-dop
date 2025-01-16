@@ -52,7 +52,8 @@ resource "yandex_compute_instance_group" "web_servers" {
 
     metadata = {
       user-data = templatefile("./meta/web-data-group.yaml.tmpl", {
-        user_vm = var.user_vm
+        user_vm = var.user_vm,
+        ssh_key = var.ssh_public_key
       })
     }
 
